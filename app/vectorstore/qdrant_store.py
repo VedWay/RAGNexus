@@ -1,9 +1,17 @@
+import os
+
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance
 
 class QdrantStore:
     def __init__(self):
-        self.client = QdrantClient(host="localhost", port=6333)
+        url = os.getenv("QDRANT_URL")
+        if url:
+            self.client = QdrantClient(url=url)
+        else:
+            host = os.getenv("QDRANT_HOST", "localhost")
+            port = int(os.getenv("QDRANT_PORT", "6333"))
+            self.client = QdrantClient(host=host, port=port)
         self.collection_name = "documents"
 
     def create_collection(self):
@@ -15,14 +23,24 @@ class QdrantStore:
             )
         )
 
-    def upload(self, vectors, texts):
+    def upload(self, vectors, payloads=None, ids=None, texts=None):
         points = []
 
-        for i, (vec, text) in enumerate(zip(vectors, texts)):
+        if payloads is None:
+            payloads = []
+            if texts is None:
+                texts = []
+            for text in texts:
+                payloads.append({"text": text})
+
+        if ids is None:
+            ids = list(range(len(vectors)))
+
+        for point_id, vec, payload in zip(ids, vectors, payloads):
             points.append({
-                "id": i,
+                "id": point_id,
                 "vector": vec,
-                "payload": {"text": text}
+                "payload": payload
             })
 
         self.client.upsert(

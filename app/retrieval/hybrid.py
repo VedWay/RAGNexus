@@ -18,8 +18,10 @@ class HybridRetriever:
         combined = []
 
         for r in vector_results:
+            payload = getattr(r, "payload", {}) or {}
             combined.append({
-                "text": r.payload["text"],
+                "chunk_id": payload.get("chunk_id"),
+                "text": payload.get("text"),
                 "score": self.alpha * (r.score / max_vec_score)
             })
 
@@ -27,6 +29,7 @@ class HybridRetriever:
         max_bm25_score = max([r.get("score", 1) for r in bm25_results] or [1])
         for r in bm25_results:
             combined.append({
+                "chunk_id": r.get("chunk_id"),
                 "text": r["text"],
                 "score": (1 - self.alpha) * (r.get("score", 1) / max_bm25_score)
             })
@@ -35,9 +38,10 @@ class HybridRetriever:
         seen = set()
         unique = []
         for r in combined:
-            if r["text"] not in seen:
+            key = r.get("chunk_id") or r.get("text")
+            if key not in seen:
                 unique.append(r)
-                seen.add(r["text"])
+                seen.add(key)
 
         # Sort by combined normalized score
         unique = sorted(unique, key=lambda x: x["score"], reverse=True)

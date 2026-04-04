@@ -1,8 +1,9 @@
 from rank_bm25 import BM25Okapi
 
 class BM25Retriever:
-    def __init__(self, texts):
-        self.texts = texts
+    def __init__(self, chunks):
+        self.chunks = chunks
+        texts = [c["text"] for c in chunks]
         self.tokenized_corpus = [text.split() for text in texts]
         self.bm25 = BM25Okapi(self.tokenized_corpus)
 
@@ -14,8 +15,10 @@ class BM25Retriever:
 
         results = []
         for idx, score in ranked[:top_k]:
+            chunk = self.chunks[idx]
             results.append({
-                "text": self.texts[idx],
+                "chunk_id": chunk["chunk_id"],
+                "text": chunk["text"],
                 "score": score
             })
 

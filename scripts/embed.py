@@ -1,5 +1,6 @@
 import sys
 import os
+import uuid
 
 # Fix import path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -7,6 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from app.ingestion.pipeline import IngestionPipeline
 from app.embeddings.embedder import Embedder
 from app.vectorstore.qdrant_store import QdrantStore
+from app.db.postgres import PostgresStore
 
 from app.retrieval.hyde import HyDEExpander
 from app.retrieval.bm25 import BM25Retriever
@@ -45,7 +47,36 @@ for chunk in texts:
 # =========================
 store = QdrantStore()
 store.create_collection()
-store.upload(vectors, texts)
+
+pg = PostgresStore()
+doc = pg.get_or_create_document(source="data/sample.pdf")
+
+chunk_rows = pg.replace_chunks(
+    document_id=doc.id,
+    chunks=[
+        {
+            "chunk_index": i,
+            "page_number": d.metadata.get("page"),
+            "text": d.page_content,
+            "metadata": d.metadata,
+        }
+        for i, d in enumerate(docs)
+    ],
+)
+
+payloads = [
+    {
+        "chunk_id": str(row.id),
+        "document_id": str(row.document_id),
+        "chunk_index": row.chunk_index,
+        "page_number": row.page_number,
+        "source": doc.source,
+    }
+    for row in chunk_rows
+]
+
+ids = [str(row.id) for row in chunk_rows]
+store.upload(vectors=vectors, payloads=payloads, ids=ids)
 
 print("✅ Stored in Qdrant!")
 
@@ -53,7 +84,14 @@ print("✅ Stored in Qdrant!")
 # =========================
 # STEP 4: BM25 + HYBRID
 # =========================
-bm25 = BM25Retriever(texts)
+bm25_chunks = [
+    {
+        "chunk_id": str(row.id),
+        "text": row.text,
+    }
+    for row in chunk_rows
+]
+bm25 = BM25Retriever(bm25_chunks)
 hybrid = HybridRetriever(store, bm25, embedder)
 
 
@@ -83,6 +121,14 @@ print(f"\n🧠 Expanded Query: {expanded_query}")
 # STEP 8: HYBRID SEARCH
 # =========================
 results = hybrid.search(expanded_query)
+
+# Fill missing text for vector results (Qdrant payload no longer stores raw text)
+id_to_text = {str(r.id): r.text for r in chunk_rows}
+for r in results:
+    if not r.get("text") and r.get("chunk_id"):
+        r["text"] = id_to_text.get(r["chunk_id"])
+
+results = [r for r in results if r.get("text")]
 
 print("\n🔥 Hybrid Results (Before Rerank):\n")
 

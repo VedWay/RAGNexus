@@ -113,7 +113,3 @@ rag/
 - **Faithfulness**: Is the answer grounded in the retrieved contexts?
 - **Answer Relevancy**: Is the answer relevant to the question?
 - **Context Recall**: Did we retrieve all relevant context?
-
-## License
-
-MIT
