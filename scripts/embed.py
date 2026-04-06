@@ -22,11 +22,12 @@ from app.generation.generator import Generator
 # STEP 1: INGEST DOCUMENT
 # =========================
 pipeline = IngestionPipeline()
-docs = pipeline.ingest("data/sample.pdf")
+docs, raw_page_count = pipeline.ingest_with_stats("data/sample.pdf")
 
 texts = [doc.page_content for doc in docs]
 
-print(f"📄 Raw pages: {len(docs)}")
+print(f"📄 Raw pages: {raw_page_count}")
+print(f"✂️  Chunks created: {len(docs)}")
 
 
 # =========================
@@ -88,6 +89,7 @@ bm25_chunks = [
     {
         "chunk_id": str(row.id),
         "text": row.text,
+        "page_number": row.page_number,
     }
     for row in chunk_rows
 ]
@@ -104,7 +106,7 @@ reranker = Reranker()
 # =========================
 # STEP 6: QUERY
 # =========================
-query = "What are proxy settings ?"
+query = "What are sequirity settings ?"
 
 print(f"\n🔍 Query: {query}")
 
@@ -124,16 +126,20 @@ results = hybrid.search(expanded_query)
 
 # Fill missing text for vector results (Qdrant payload no longer stores raw text)
 id_to_text = {str(r.id): r.text for r in chunk_rows}
+id_to_page = {str(r.id): r.page_number for r in chunk_rows}
 for r in results:
     if not r.get("text") and r.get("chunk_id"):
         r["text"] = id_to_text.get(r["chunk_id"])
+    if r.get("chunk_id") and not r.get("page_number"):
+        r["page_number"] = id_to_page.get(r["chunk_id"])
 
 results = [r for r in results if r.get("text")]
 
 print("\n🔥 Hybrid Results (Before Rerank):\n")
 
 for i, res in enumerate(results[:5]):
-    print(f"Result {i+1} | Score: {res['score']}")
+    page_info = f" | Page: {res.get('page_number', 'N/A')}" if res.get('page_number') is not None else ""
+    print(f"Result {i+1} | Score: {res['score']:.4f}{page_info}")
     print(res["text"][:200])
     print("------")
 
@@ -149,7 +155,8 @@ filtered_results = reranked_results[:5]
 print("\n🎯 Final Filtered Results:\n")
 
 for i, res in enumerate(filtered_results):
-    print(f"Result {i+1} | Score: {res['rerank_score']}")
+    page_info = f" | Page: {res.get('page_number', 'N/A')}" if res.get('page_number') is not None else ""
+    print(f"Result {i+1} | Rerank Score: {res['rerank_score']:.4f}{page_info}")
     print(res["text"][:200])
     print("------")
 

@@ -10,7 +10,7 @@ class QdrantStore:
             self.client = QdrantClient(url=url)
         else:
             host = os.getenv("QDRANT_HOST", "localhost")
-            port = int(os.getenv("QDRANT_PORT", "6333"))
+            port = int(os.getenv("QDRANT_PORT", "6334"))
             self.client = QdrantClient(host=host, port=port)
         self.collection_name = "documents"
 

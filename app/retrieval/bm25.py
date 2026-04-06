@@ -19,6 +19,7 @@ class BM25Retriever:
             results.append({
                 "chunk_id": chunk["chunk_id"],
                 "text": chunk["text"],
+                "page_number": chunk.get("page_number"),
                 "score": score
             })
 

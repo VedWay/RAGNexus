@@ -22,6 +22,7 @@ class HybridRetriever:
             combined.append({
                 "chunk_id": payload.get("chunk_id"),
                 "text": payload.get("text"),
+                "page_number": payload.get("page_number"),
                 "score": self.alpha * (r.score / max_vec_score)
             })
 

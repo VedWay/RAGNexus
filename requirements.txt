@@ -1,0 +1,19 @@
+beautifulsoup4
+numpy
+pandas
+psycopg2-binary
+pydantic
+pymupdf
+python-dotenv
+qdrant-client
+rank-bm25
+requests
+sentence-transformers
+sqlalchemy
+
+# LangChain pieces used by ingestion/chunking
+langchain-core
+langchain-text-splitters
+
+# LLM client used in generation/HyDE
+groq
