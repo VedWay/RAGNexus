@@ -1,7 +1,9 @@
 import './App.css'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import brandLogo from './assets/hero.png'
 
 function App() {
+  const [askMode, setAskMode] = useState('document')
   const [documentId, setDocumentId] = useState(null)
   const [source, setSource] = useState(null)
   const [status, setStatus] = useState('')
@@ -15,7 +17,7 @@ function App() {
       id: crypto.randomUUID(),
       role: 'assistant',
       content:
-        'Upload a PDF/TXT/CSV or paste a website URL. After ingestion, ask questions and I will answer using only your content with source citations.',
+        'Choose Ask from PDF/Text for document-grounded answers, or Basic Chat for general questions.',
     },
   ])
   const [question, setQuestion] = useState('')
@@ -29,7 +31,11 @@ function App() {
     el.scrollTop = el.scrollHeight
   }, [messages.length, isBusy])
 
-  const canAsk = useMemo(() => Boolean(documentId) && question.trim().length > 0 && !isBusy, [documentId, question, isBusy])
+  const canAsk = useMemo(() => {
+    if (isBusy || question.trim().length === 0) return false
+    if (askMode === 'document') return Boolean(documentId)
+    return true
+  }, [askMode, documentId, question, isBusy])
 
   async function readJsonOrText(res) {
     const text = await res.text()
@@ -95,7 +101,7 @@ function App() {
 
   async function sendQuestion() {
     const q = question.trim()
-    if (!documentId) {
+    if (askMode === 'document' && !documentId) {
       setError('Ingest something first (file or URL).')
       return
     }
@@ -110,10 +116,16 @@ function App() {
 
     setIsBusy(true)
     try {
-      const res = await fetch('/ask', {
+      const endpoint = askMode === 'document' ? '/ask' : '/chat/basic'
+      const payload =
+        askMode === 'document'
+          ? { document_id: documentId, question: q, top_k: 10 }
+          : { message: q }
+
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ document_id: documentId, question: q, top_k: 10 }),
+        body: JSON.stringify(payload),
       })
       const { json, text } = await readJsonOrText(res)
       if (!res.ok) throw new Error(json?.detail || text || `Failed to answer (HTTP ${res.status}).`)
@@ -143,67 +155,97 @@ function App() {
   return (
     <div className="layout">
       <aside className="sidebar">
-        <div className="brand">
-          <div className="dot" />
-          <div>
-            <div className="brandTitle">RAG Chat</div>
-            <div className="brandSub">FastAPI + React</div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="cardTitle">Ingest</div>
-
-          <div className="field">
-            <label>Upload file (PDF/TXT/CSV)</label>
-            <input
-              type="file"
-              accept=".pdf,.txt,.csv"
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
-              disabled={isBusy}
-            />
-            <button className="btn" onClick={ingestFile} disabled={isBusy || !file}>
-              Ingest file
-            </button>
+        <div className="sidebarInner">
+          <div className="brand">
+            <img className="brandLogo" src={brandLogo} alt="Brand logo" />
+            <div>
+              <div className="brandTitle">RAGNexus</div>
+            </div>
           </div>
 
-          <div className="divider" />
+          <div className="modeCard">
+            <div className="cardTitle">Ask Mode</div>
+            <div className="modeToggle" role="tablist" aria-label="Ask mode">
+              <button
+                className={`modeBtn ${askMode === 'document' ? 'active' : ''}`}
+                onClick={() => setAskMode('document')}
+                type="button"
+              >
+                Ask from PDF/Text
+              </button>
+              <button
+                className={`modeBtn ${askMode === 'basic' ? 'active' : ''}`}
+                onClick={() => setAskMode('basic')}
+                type="button"
+              >
+                Basic Chat
+              </button>
+            </div>
+            <p className="modeHint">
+              {askMode === 'document'
+                ? 'Answers are retrieved only from your ingested document.'
+                : 'Use this for general chat questions.'}
+            </p>
+          </div>
 
-          <div className="field">
-            <label>Website URL</label>
-            <input
-              type="url"
-              placeholder="https://example.com/docs"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              disabled={isBusy}
-            />
-            <button className="btn" onClick={ingestUrl} disabled={isBusy || !url.trim()}>
-              Ingest URL
-            </button>
-          </div>
-        </div>
+          <div className="card">
+            <div className="cardTitle">Ingest</div>
 
-        <div className="card">
-          <div className="cardTitle">Active document</div>
-          <div className="kv">
-            <div className="k">document_id</div>
-            <div className="v mono">{documentId || '—'}</div>
+            <div className="field">
+              <label>Upload file (PDF/TXT/CSV)</label>
+              <input
+                type="file"
+                accept=".pdf,.txt,.csv"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                disabled={isBusy}
+              />
+              <button className="btn" onClick={ingestFile} disabled={isBusy || !file}>
+                Ingest file
+              </button>
+            </div>
+
+            <div className="divider" />
+
+            <div className="field">
+              <label>Website URL</label>
+              <input
+                type="url"
+                placeholder="https://example.com/docs"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                disabled={isBusy}
+              />
+              <button className="btn" onClick={ingestUrl} disabled={isBusy || !url.trim()}>
+                Ingest URL
+              </button>
+            </div>
           </div>
-          <div className="kv">
-            <div className="k">source</div>
-            <div className="v">{source || '—'}</div>
+
+          <div className="card">
+            <div className="cardTitle">Active document</div>
+            <div className="kv">
+              <div className="k">document_id</div>
+              <div className="v mono">{documentId || '—'}</div>
+            </div>
+            <div className="kv">
+              <div className="k">source</div>
+              <div className="v">{source || '—'}</div>
+            </div>
+            {status ? <div className="note ok">{status}</div> : null}
+            {error ? <div className="note err">{error}</div> : null}
           </div>
-          {status ? <div className="note ok">{status}</div> : null}
-          {error ? <div className="note err">{error}</div> : null}
         </div>
       </aside>
 
       <main className="chat">
         <header className="chatHeader">
-          <div className="chatTitle">Chat</div>
+          <div className="chatTitle">Chat Workspace</div>
           <div className="chatHint">
-            {documentId ? 'Ask questions about your ingested content.' : 'Ingest a file or URL to start.'}
+            {askMode === 'document'
+              ? documentId
+                ? 'Document mode is on: answers come only from your ingested source.'
+                : 'Ingest a file or URL, then ask from PDF/Text.'
+              : 'Basic chat mode is on: ask general questions.'}
           </div>
         </header>
 
@@ -249,7 +291,13 @@ function App() {
         <div className="composer">
           <textarea
             className="input"
-            placeholder={documentId ? 'Ask a question…' : 'Ingest something first…'}
+            placeholder={
+              askMode === 'document'
+                ? documentId
+                  ? 'Ask from your ingested document…'
+                  : 'Ingest something first…'
+                : 'Say hi or hello…'
+            }
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             onKeyDown={(e) => {
@@ -258,7 +306,7 @@ function App() {
             disabled={isBusy}
           />
           <button className="btn primary" onClick={sendQuestion} disabled={!canAsk}>
-            Send
+            {askMode === 'document' ? 'Ask from PDF/Text' : 'Send'}
           </button>
         </div>
       </main>

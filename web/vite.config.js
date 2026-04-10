@@ -9,6 +9,7 @@ export default defineConfig({
       '/health': 'http://localhost:8000',
       '/ingest': 'http://localhost:8000',
       '/ask': 'http://localhost:8000',
+      '/chat': 'http://localhost:8000',
     },
   },
 })

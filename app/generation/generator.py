@@ -4,7 +4,6 @@ load_dotenv()
 
 from groq import Groq
 import os
-print("API KEY:", os.getenv("GROQ_API_KEY"))
 
 class Generator:
     def __init__(self):
@@ -16,21 +15,23 @@ class Generator:
         context_text = "\n\n".join(contexts)
 
         prompt = f"""
-You are a strict RAG system.
+You are a strict RAG system answering questions from provided excerpts.
 
 Rules:
-1. Answer ONLY using the provided context
-2. Do NOT use prior knowledge
-3. If answer is not in context, say: "Not found in context"
-4. Be concise and factual
+1. Use ONLY the provided context excerpts. Do not use outside knowledge.
+2. If the answer is not present, reply exactly: Not found in context
+3. Write complete, well-formed sentences (no fragments).
+4. Prefer bullet points for "benefits", "features", "steps", etc. If the context contains a bullet list, extract ALL items from that list.
+5. Add citations using bracketed excerpt numbers like [1] or [2][3].
+6. Every factual claim must have at least one citation.
 
-Context:
+Context excerpts:
 {context_text}
 
 Question:
 {query}
 
-Answer:
+Answer (with citations):
 """
 
         
@@ -39,6 +40,24 @@ Answer:
             messages=[
                 {"role": "user", "content": prompt}
             ]
+        )
+
+        return response.choices[0].message.content
+
+    def generate_basic(self, message):
+        """General-purpose chat for non-document mode using Groq free model."""
+        response = self.client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a concise, friendly assistant. "
+                        "Answer general questions clearly."
+                    ),
+                },
+                {"role": "user", "content": message},
+            ],
         )
 
         return response.choices[0].message.content
