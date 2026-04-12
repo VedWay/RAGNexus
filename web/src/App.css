@@ -24,11 +24,16 @@
 .brand {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
   padding: 10px 10px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.68);
+}
+
+.brand > div {
+  margin-right: auto;
 }
 
 .brandLogo {
@@ -47,6 +52,17 @@
 .brandSub {
   font-size: 12px;
   color: var(--muted);
+}
+
+.logoutBtn {
+  border: 1px solid rgba(137, 116, 78, 0.3);
+  background: #fffdf8;
+  color: #4c3f29;
+  border-radius: 10px;
+  height: 34px;
+  padding: 0 10px;
+  cursor: pointer;
+  font-weight: 600;
 }
 
 .modeCard {

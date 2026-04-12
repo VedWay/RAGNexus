@@ -1,8 +1,26 @@
 import './App.css'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import brandLogo from './assets/hero.png'
+import LandingPage from './components/LandingPage'
 
 function App() {
+  const [authMode, setAuthMode] = useState('login')
+  const [authEmail, setAuthEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [authName, setAuthName] = useState('')
+  const [authError, setAuthError] = useState('')
+  const [authBusy, setAuthBusy] = useState(false)
+  const [accessToken, setAccessToken] = useState(localStorage.getItem('access_token') || '')
+  const [refreshToken, setRefreshToken] = useState(localStorage.getItem('refresh_token') || '')
+  const [userInfo, setUserInfo] = useState(() => {
+    const raw = localStorage.getItem('auth_user')
+    if (!raw) return null
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return null
+    }
+  })
   const [askMode, setAskMode] = useState('document')
   const [documentId, setDocumentId] = useState(null)
   const [source, setSource] = useState(null)
@@ -24,6 +42,7 @@ function App() {
   const [isBusy, setIsBusy] = useState(false)
 
   const listRef = useRef(null)
+  const isAuthed = Boolean(accessToken)
 
   useEffect(() => {
     const el = listRef.current
@@ -36,6 +55,82 @@ function App() {
     if (askMode === 'document') return Boolean(documentId)
     return true
   }, [askMode, documentId, question, isBusy])
+
+  function persistAuth(payload) {
+    const nextAccess = payload?.access_token || ''
+    const nextRefresh = payload?.refresh_token || ''
+    const nextUser = payload?.user || null
+
+    setAccessToken(nextAccess)
+    setRefreshToken(nextRefresh)
+    setUserInfo(nextUser)
+
+    localStorage.setItem('access_token', nextAccess)
+    localStorage.setItem('refresh_token', nextRefresh)
+    localStorage.setItem('auth_user', JSON.stringify(nextUser || {}))
+  }
+
+  function clearAuth() {
+    setAccessToken('')
+    setRefreshToken('')
+    setUserInfo(null)
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('refresh_token')
+    localStorage.removeItem('auth_user')
+  }
+
+  async function apiFetch(path, options = {}) {
+    const headers = { ...(options.headers || {}) }
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`
+
+    let res = await fetch(path, { ...options, headers })
+    if (res.status !== 401 || !refreshToken) return res
+
+    const refreshRes = await fetch('/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    })
+
+    if (!refreshRes.ok) {
+      clearAuth()
+      return res
+    }
+
+    const refreshPayload = await refreshRes.json()
+    persistAuth(refreshPayload)
+
+    const retryHeaders = { ...(options.headers || {}), Authorization: `Bearer ${refreshPayload.access_token}` }
+    res = await fetch(path, { ...options, headers: retryHeaders })
+    return res
+  }
+
+  async function submitAuth(e) {
+    e.preventDefault()
+    setAuthError('')
+    setAuthBusy(true)
+    try {
+      const endpoint = authMode === 'login' ? '/auth/login' : '/auth/register'
+      const payload =
+        authMode === 'login'
+          ? { email: authEmail, password: authPassword }
+          : { email: authEmail, password: authPassword, full_name: authName }
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const { json, text } = await readJsonOrText(res)
+      if (!res.ok) throw new Error(json?.detail || text || `Auth failed (HTTP ${res.status})`)
+      persistAuth(json)
+      setAuthPassword('')
+    } catch (err) {
+      setAuthError(err.message || String(err))
+    } finally {
+      setAuthBusy(false)
+    }
+  }
 
   async function readJsonOrText(res) {
     const text = await res.text()
@@ -57,13 +152,13 @@ function App() {
     setIsBusy(true)
     setStatus('Ingesting website…')
     try {
-      const res = await fetch('/ingest/url', {
+      const authRes = await apiFetch('/ingest/url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: url.trim() }),
       })
-      const { json, text } = await readJsonOrText(res)
-      if (!res.ok) throw new Error(json?.detail || text || `Failed to ingest URL (HTTP ${res.status}).`)
+      const { json, text } = await readJsonOrText(authRes)
+      if (!authRes.ok) throw new Error(json?.detail || text || `Failed to ingest URL (HTTP ${authRes.status}).`)
       setDocumentId(json.document_id)
       setSource(json.source)
       setStatus(`Ingested: ${json.source} (${json.chunk_count} chunks)`)
@@ -86,7 +181,7 @@ function App() {
     try {
       const form = new FormData()
       form.append('file', file)
-      const res = await fetch('/ingest/file', { method: 'POST', body: form })
+      const res = await apiFetch('/ingest/file', { method: 'POST', body: form })
       const { json, text } = await readJsonOrText(res)
       if (!res.ok) throw new Error(json?.detail || text || `Failed to ingest file (HTTP ${res.status}).`)
       setDocumentId(json.document_id)
@@ -122,13 +217,13 @@ function App() {
           ? { document_id: documentId, question: q, top_k: 10 }
           : { message: q }
 
-      const res = await fetch(endpoint, {
+      const authRes = await apiFetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-      const { json, text } = await readJsonOrText(res)
-      if (!res.ok) throw new Error(json?.detail || text || `Failed to answer (HTTP ${res.status}).`)
+      const { json, text } = await readJsonOrText(authRes)
+      if (!authRes.ok) throw new Error(json?.detail || text || `Failed to answer (HTTP ${authRes.status}).`)
 
       const assistantMsg = {
         id: crypto.randomUUID(),
@@ -152,6 +247,25 @@ function App() {
     }
   }
 
+  if (!isAuthed) {
+    return (
+      <LandingPage
+        brandLogo={brandLogo}
+        authMode={authMode}
+        setAuthMode={setAuthMode}
+        submitAuth={submitAuth}
+        authName={authName}
+        setAuthName={setAuthName}
+        authEmail={authEmail}
+        setAuthEmail={setAuthEmail}
+        authPassword={authPassword}
+        setAuthPassword={setAuthPassword}
+        authBusy={authBusy}
+        authError={authError}
+      />
+    )
+  }
+
   return (
     <div className="layout">
       <aside className="sidebar">
@@ -160,7 +274,11 @@ function App() {
             <img className="brandLogo" src={brandLogo} alt="Brand logo" />
             <div>
               <div className="brandTitle">RAGNexus</div>
+              <div className="brandSub">{userInfo?.email || 'Authenticated user'}</div>
             </div>
+            <button className="logoutBtn" type="button" onClick={clearAuth}>
+              Logout
+            </button>
           </div>
 
           <div className="modeCard">

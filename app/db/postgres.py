@@ -42,6 +42,16 @@ class Chunk(Base):
     document: Mapped[Document] = relationship(back_populates="chunks")
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    full_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 def _get_database_url() -> str:
     url = os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DB_URL")
     if not url:
@@ -122,3 +132,23 @@ class PostgresStore:
                 .scalars()
                 .all()
             )
+
+    def get_user_by_email(self, email: str) -> Optional[User]:
+        with self.session() as s:
+            return s.execute(select(User).where(User.email == email).limit(1)).scalar_one_or_none()
+
+    def get_user_by_id(self, user_id: str) -> Optional[User]:
+        with self.session() as s:
+            try:
+                uid = uuid.UUID(user_id)
+            except ValueError:
+                return None
+            return s.execute(select(User).where(User.id == uid).limit(1)).scalar_one_or_none()
+
+    def create_user(self, *, email: str, password_hash: str, full_name: Optional[str] = None) -> User:
+        with self.session() as s:
+            user = User(email=email, password_hash=password_hash, full_name=full_name)
+            s.add(user)
+            s.commit()
+            s.refresh(user)
+            return user
