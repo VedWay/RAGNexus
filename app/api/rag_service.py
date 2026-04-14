@@ -54,11 +54,14 @@ def answer_basic_message(message: str) -> str:
     return generator.generate_basic(prompt)
 
 
-def ingest_and_index(source: str) -> IngestResult:
+def ingest_and_index(user_id: str, source: str) -> IngestResult:
     """
     Ingest a local file path or URL, chunk it, embed it,
     store chunks in Postgres and vectors in Qdrant.
+    All data is tagged with tenant_id for multi-tenant isolation.
     """
+    user_uuid = uuid.UUID(user_id)
+    
     pipeline = IngestionPipeline()
     docs, raw_count = pipeline.ingest_with_stats(source)
     texts = [d.page_content for d in docs]
@@ -70,9 +73,10 @@ def ingest_and_index(source: str) -> IngestResult:
     store.create_collection()
 
     pg = PostgresStore()
-    doc_row = pg.get_or_create_document(source=source)
+    doc_row = pg.get_or_create_document(user_id=user_uuid, source=source)
 
     chunk_rows = pg.replace_chunks(
+        user_id=user_uuid,
         document_id=doc_row.id,
         chunks=[
             {
@@ -96,7 +100,8 @@ def ingest_and_index(source: str) -> IngestResult:
         for row in chunk_rows
     ]
     ids = [str(row.id) for row in chunk_rows]
-    store.upload(vectors=vectors, payloads=payloads, ids=ids)
+    # Pass tenant_id (user_id) to upload - it will be added to every payload
+    store.upload(vectors=vectors, payloads=payloads, ids=ids, tenant_id=str(user_uuid))
 
     return IngestResult(
         document_id=str(doc_row.id),
@@ -106,18 +111,20 @@ def ingest_and_index(source: str) -> IngestResult:
     )
 
 
-def answer_question(*, document_id: str, question: str, top_k: int = 5) -> Dict[str, Any]:
+def answer_question(*, user_id: str, document_id: str, question: str, top_k: int = 5) -> Dict[str, Any]:
     """
     Run retrieval + generation for a single document.
     Returns answer + sources suitable for UI citations.
+    All queries are scoped to the current user (tenant).
     """
+    user_uuid = uuid.UUID(user_id)
     doc_uuid = uuid.UUID(document_id)
 
     embedder = Embedder()
     store = QdrantStore()
     pg = PostgresStore()
 
-    chunk_rows = pg.fetch_all_chunks(document_id=doc_uuid)
+    chunk_rows = pg.fetch_all_chunks(user_id=user_uuid, document_id=doc_uuid)
     if not chunk_rows:
         raise RuntimeError("No chunks found for this document_id. Ingest first.")
 
@@ -130,7 +137,8 @@ def answer_question(*, document_id: str, question: str, top_k: int = 5) -> Dict[
     hyde = HyDEExpander()
     expanded_query = hyde.expand(question)
 
-    results = hybrid.search(expanded_query)
+    # Pass tenant_id to hybrid search for multi-tenant isolation in Qdrant
+    results = hybrid.search(expanded_query, tenant_id=str(user_uuid))
 
     # Fill missing text/page using Postgres rows
     id_to_row = {str(r.id): r for r in chunk_rows}

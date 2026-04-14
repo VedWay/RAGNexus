@@ -20,6 +20,7 @@ class Document(Base):
     __tablename__ = "documents"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     source: Mapped[str] = mapped_column(String, nullable=False, index=True)
     title: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     content_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -32,6 +33,7 @@ class Chunk(Base):
     __tablename__ = "chunks"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), index=True)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     page_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -78,24 +80,31 @@ class PostgresStore:
     def session(self) -> Session:
         return SessionLocal()
 
-    def get_or_create_document(self, *, source: str, title: Optional[str] = None, content_hash: Optional[str] = None) -> Document:
+    def get_or_create_document(self, *, user_id: uuid.UUID, source: str, title: Optional[str] = None, content_hash: Optional[str] = None) -> Document:
         with self.session() as s:
-            existing = s.execute(select(Document).where(Document.source == source).limit(1)).scalar_one_or_none()
+            existing = s.execute(
+                select(Document).where(
+                    (Document.user_id == user_id) & (Document.source == source)
+                ).limit(1)
+            ).scalar_one_or_none()
             if existing:
                 return existing
 
-            doc = Document(source=source, title=title, content_hash=content_hash)
+            doc = Document(user_id=user_id, source=source, title=title, content_hash=content_hash)
             s.add(doc)
             s.commit()
             s.refresh(doc)
             return doc
 
-    def replace_chunks(self, *, document_id: uuid.UUID, chunks: List[Dict[str, Any]]) -> List[Chunk]:
+    def replace_chunks(self, *, user_id: uuid.UUID, document_id: uuid.UUID, chunks: List[Dict[str, Any]]) -> List[Chunk]:
         with self.session() as s:
-            s.query(Chunk).filter(Chunk.document_id == document_id).delete()
+            s.query(Chunk).filter(
+                (Chunk.user_id == user_id) & (Chunk.document_id == document_id)
+            ).delete()
             rows: List[Chunk] = []
             for c in chunks:
                 row = Chunk(
+                    user_id=user_id,
                     document_id=document_id,
                     chunk_index=int(c["chunk_index"]),
                     page_number=c.get("page_number"),
@@ -109,25 +118,33 @@ class PostgresStore:
                 s.refresh(r)
             return rows
 
-    def fetch_chunks_by_ids(self, chunk_ids: Iterable[str]) -> List[Chunk]:
+    def fetch_chunks_by_ids(self, user_id: uuid.UUID, chunk_ids: Iterable[str]) -> List[Chunk]:
         ids = [uuid.UUID(x) for x in chunk_ids]
         if not ids:
             return []
         with self.session() as s:
-            return list(s.execute(select(Chunk).where(Chunk.id.in_(ids))).scalars().all())
+            return list(s.execute(
+                select(Chunk).where(
+                    (Chunk.user_id == user_id) & (Chunk.id.in_(ids))
+                )
+            ).scalars().all())
 
-    def fetch_all_chunk_texts(self, *, document_id: uuid.UUID) -> List[str]:
+    def fetch_all_chunk_texts(self, *, user_id: uuid.UUID, document_id: uuid.UUID) -> List[str]:
         with self.session() as s:
             rows = s.execute(
-                select(Chunk.text).where(Chunk.document_id == document_id).order_by(Chunk.chunk_index.asc())
+                select(Chunk.text).where(
+                    (Chunk.user_id == user_id) & (Chunk.document_id == document_id)
+                ).order_by(Chunk.chunk_index.asc())
             ).all()
             return [r[0] for r in rows]
 
-    def fetch_all_chunks(self, *, document_id: uuid.UUID) -> List[Chunk]:
+    def fetch_all_chunks(self, *, user_id: uuid.UUID, document_id: uuid.UUID) -> List[Chunk]:
         with self.session() as s:
             return list(
                 s.execute(
-                    select(Chunk).where(Chunk.document_id == document_id).order_by(Chunk.chunk_index.asc())
+                    select(Chunk).where(
+                        (Chunk.user_id == user_id) & (Chunk.document_id == document_id)
+                    ).order_by(Chunk.chunk_index.asc())
                 )
                 .scalars()
                 .all()

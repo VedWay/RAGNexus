@@ -1,4 +1,4 @@
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import os
@@ -17,9 +17,13 @@ from app.auth.security import (
 )
 from app.api.rag_service import answer_basic_message, answer_question, ingest_and_index
 from app.db.postgres import PostgresStore, User
+from app.core.rate_limiter import limiter, RATE_LIMIT_ASK, RATE_LIMIT_INGEST, RATE_LIMIT_CHAT
 
 
 app = FastAPI(title="RAG API")
+
+# Apply rate limiter middleware globally
+app.state.limiter = limiter
 
 app.add_middleware(
     CORSMiddleware,
@@ -126,9 +130,11 @@ def refresh(req: AuthRefreshRequest):
 
 
 @app.post("/ingest/url")
-def ingest_url(req: IngestUrlRequest, _: User = Depends(get_current_user)):
+@limiter.limit(RATE_LIMIT_INGEST)
+def ingest_url(req: IngestUrlRequest, request: Request, user: User = Depends(get_current_user)):
+    """Ingest a document from URL with multi-tenant isolation and rate limiting."""
     try:
-        res = ingest_and_index(req.url)
+        res = ingest_and_index(str(user.id), req.url)
         return {
             "document_id": res.document_id,
             "source": res.source,
@@ -140,7 +146,9 @@ def ingest_url(req: IngestUrlRequest, _: User = Depends(get_current_user)):
 
 
 @app.post("/ingest/file")
-async def ingest_file(file: UploadFile = File(...), _: User = Depends(get_current_user)):
+@limiter.limit(RATE_LIMIT_INGEST)
+async def ingest_file(request: Request, file: UploadFile = File(...), user: User = Depends(get_current_user)):
+    """Ingest a document from file upload with multi-tenant isolation and rate limiting."""
     filename = file.filename or ""
     _, ext = os.path.splitext(filename.lower())
     if ext not in {".pdf", ".txt", ".csv"}:
@@ -161,7 +169,7 @@ async def ingest_file(file: UploadFile = File(...), _: User = Depends(get_curren
             pass
 
     try:
-        res = ingest_and_index(saved_path)
+        res = ingest_and_index(str(user.id), saved_path)
         return {
             "document_id": res.document_id,
             "source": res.source,
@@ -173,15 +181,19 @@ async def ingest_file(file: UploadFile = File(...), _: User = Depends(get_curren
 
 
 @app.post("/ask")
-def ask(req: AskRequest, _: User = Depends(get_current_user)):
+@limiter.limit(RATE_LIMIT_ASK)
+def ask(req: AskRequest, request: Request, user: User = Depends(get_current_user)):
+    """Answer a question about a user's document with multi-tenant isolation and rate limiting."""
     try:
-        return answer_question(document_id=req.document_id, question=req.question, top_k=req.top_k)
+        return answer_question(user_id=str(user.id), document_id=req.document_id, question=req.question, top_k=req.top_k)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @app.post("/chat/basic")
-def chat_basic(req: BasicChatRequest, _: User = Depends(get_current_user)):
+@limiter.limit(RATE_LIMIT_CHAT)
+def chat_basic(req: BasicChatRequest, request: Request, user: User = Depends(get_current_user)):
+    """Basic chat without document context, with rate limiting."""
     try:
         return {"answer": answer_basic_message(req.message), "sources": []}
     except Exception as e:
