@@ -40,8 +40,15 @@ function App() {
   ])
   const [question, setQuestion] = useState('')
   const [isBusy, setIsBusy] = useState(false)
+  const [sessionId, setSessionId] = useState(null)
+  const [chatSessions, setChatSessions] = useState([])
+  const [sessionsBusy, setSessionsBusy] = useState(false)
+  const [sessionDialog, setSessionDialog] = useState(null)
+  const [sessionTitleInput, setSessionTitleInput] = useState('')
+  const [sessionDialogBusy, setSessionDialogBusy] = useState(false)
 
   const listRef = useRef(null)
+  const suppressAutoLoadRef = useRef(false)
   const isAuthed = Boolean(accessToken)
 
   useEffect(() => {
@@ -55,6 +62,45 @@ function App() {
     if (askMode === 'document') return Boolean(documentId)
     return true
   }, [askMode, documentId, question, isBusy])
+
+  function defaultAssistantMessage(nextMode, nextDocumentId) {
+    if (nextMode === 'document') {
+      return nextDocumentId
+        ? 'Document mode is active. Ask about your ingested content.'
+        : 'Ingest a file or URL first, then ask from PDF/Text.'
+    }
+    return 'Basic chat mode is active. Ask anything.'
+  }
+
+  function mapHistoryToMessages(history) {
+    return (history || []).map((m) => ({
+      id: m.id || crypto.randomUUID(),
+      role: m.role,
+      content: m.content,
+      sources: Array.isArray(m.sources) ? m.sources : [],
+    }))
+  }
+
+  function sessionTitle(session) {
+    const raw = String(session?.title || '').trim()
+    if (raw) return raw
+    if (session?.mode === 'document') return 'Document chat'
+    return 'Basic chat'
+  }
+
+  function sessionSubtitle(session) {
+    const modeLabel = session?.mode === 'document' ? 'Doc mode' : 'Basic mode'
+    if (!session?.updated_at) return modeLabel
+    const dt = new Date(session.updated_at)
+    if (Number.isNaN(dt.getTime())) return modeLabel
+    const when = dt.toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+    return `${modeLabel} • ${when}`
+  }
 
   function persistAuth(payload) {
     const nextAccess = payload?.access_token || ''
@@ -77,7 +123,58 @@ function App() {
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
     localStorage.removeItem('auth_user')
+    setSessionId(null)
+    setChatSessions([])
+    setMessages([
+      {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content:
+          'Choose Ask from PDF/Text for document-grounded answers, or Basic Chat for general questions.',
+      },
+    ])
   }
+
+  function openRenameDialog(session) {
+    setSessionDialog({ type: 'rename', session })
+    setSessionTitleInput(sessionTitle(session))
+  }
+
+  function openDeleteDialog(session) {
+    setSessionDialog({ type: 'delete', session })
+    setSessionTitleInput('')
+  }
+
+  function closeSessionDialog() {
+    if (sessionDialogBusy) return
+    setSessionDialog(null)
+    setSessionTitleInput('')
+  }
+
+  useEffect(() => {
+    if (!isAuthed) return
+    if (suppressAutoLoadRef.current) {
+      suppressAutoLoadRef.current = false
+      return
+    }
+    if (askMode === 'document' && !documentId) {
+      setSessionId(null)
+      setMessages([
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: defaultAssistantMessage('document', null),
+        },
+      ])
+      return
+    }
+    loadLatestSession(askMode, documentId)
+  }, [isAuthed, askMode, documentId])
+
+  useEffect(() => {
+    if (!isAuthed) return
+    loadSessionList()
+  }, [isAuthed])
 
   async function apiFetch(path, options = {}) {
     const headers = { ...(options.headers || {}) }
@@ -103,6 +200,197 @@ function App() {
     const retryHeaders = { ...(options.headers || {}), Authorization: `Bearer ${refreshPayload.access_token}` }
     res = await fetch(path, { ...options, headers: retryHeaders })
     return res
+  }
+
+  async function loadSessionList() {
+    if (!isAuthed) return
+    setSessionsBusy(true)
+    try {
+      const res = await apiFetch('/chat/sessions?limit=50')
+      const { json } = await readJsonOrText(res)
+      if (!res.ok) throw new Error('Failed to load conversation list')
+      setChatSessions(Array.isArray(json?.sessions) ? json.sessions : [])
+    } catch {
+      setChatSessions([])
+    } finally {
+      setSessionsBusy(false)
+    }
+  }
+
+  async function openSession(session) {
+    if (!session?.id) return
+    setError('')
+    setStatus('')
+    setIsBusy(true)
+    try {
+      suppressAutoLoadRef.current = true
+      if (session.mode === 'basic') {
+        setAskMode('basic')
+      } else {
+        setAskMode('document')
+        if (session.document_id) setDocumentId(session.document_id)
+      }
+
+      setSessionId(session.id)
+      const historyRes = await apiFetch(`/chat/history/${session.id}`)
+      const { json: historyJson, text } = await readJsonOrText(historyRes)
+      if (!historyRes.ok) throw new Error(historyJson?.detail || text || 'Failed to load chat history')
+
+      const mapped = mapHistoryToMessages(historyJson?.messages)
+      setMessages(
+        mapped.length
+          ? mapped
+          : [
+              {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content: defaultAssistantMessage(session.mode, session.document_id),
+              },
+            ],
+      )
+    } catch (e) {
+      setError(e.message || String(e))
+    } finally {
+      setIsBusy(false)
+    }
+  }
+
+  async function renameSession(session) {
+    openRenameDialog(session)
+  }
+
+  async function deleteSession(session) {
+    openDeleteDialog(session)
+  }
+
+  async function submitSessionDialog() {
+    if (!sessionDialog?.session?.id) return
+
+    const session = sessionDialog.session
+    const action = sessionDialog.type
+
+    setSessionDialogBusy(true)
+    setError('')
+    try {
+      if (action === 'rename') {
+        const title = sessionTitleInput.trim()
+        if (!title) {
+          throw new Error('Title cannot be empty.')
+        }
+
+        const res = await apiFetch(`/chat/sessions/${session.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title }),
+        })
+        const { json, text } = await readJsonOrText(res)
+        if (!res.ok) throw new Error(json?.detail || text || 'Failed to rename chat session')
+      } else {
+        const res = await apiFetch(`/chat/sessions/${session.id}`, { method: 'DELETE' })
+        const { json, text } = await readJsonOrText(res)
+        if (!res.ok) throw new Error(json?.detail || text || 'Failed to delete chat session')
+
+        const wasActive = sessionId === session.id
+        setSessionDialog(null)
+        setSessionTitleInput('')
+        await loadSessionList()
+
+        if (wasActive) {
+          setSessionId(null)
+          await loadLatestSession(askMode, documentId)
+        }
+        return
+      }
+
+      setSessionDialog(null)
+      setSessionTitleInput('')
+      await loadSessionList()
+    } catch (e) {
+      setError(e.message || String(e))
+    } finally {
+      setSessionDialogBusy(false)
+    }
+  }
+
+  async function loadLatestSession(nextMode, nextDocumentId) {
+    try {
+      const query = new URLSearchParams({ mode: nextMode, limit: '1' })
+      if (nextMode === 'document' && nextDocumentId) query.set('document_id', nextDocumentId)
+      const listRes = await apiFetch(`/chat/sessions?${query.toString()}`)
+      const { json: listJson } = await readJsonOrText(listRes)
+      if (!listRes.ok) throw new Error('Failed to load chat sessions')
+
+      const latest = listJson?.sessions?.[0]
+      if (!latest?.id) {
+        setSessionId(null)
+        setMessages([
+          {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: defaultAssistantMessage(nextMode, nextDocumentId),
+          },
+        ])
+        return
+      }
+
+      setSessionId(latest.id)
+      const historyRes = await apiFetch(`/chat/history/${latest.id}`)
+      const { json: historyJson } = await readJsonOrText(historyRes)
+      if (!historyRes.ok) throw new Error('Failed to load chat history')
+
+      const mapped = mapHistoryToMessages(historyJson?.messages)
+      setMessages(
+        mapped.length
+          ? mapped
+          : [
+              {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content: defaultAssistantMessage(nextMode, nextDocumentId),
+              },
+            ],
+      )
+          await loadSessionList()
+    } catch {
+      setSessionId(null)
+      setMessages([
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: defaultAssistantMessage(nextMode, nextDocumentId),
+        },
+      ])
+      await loadSessionList()
+    }
+  }
+
+  async function startNewChat() {
+    setError('')
+    setStatus('')
+    try {
+      const payload =
+        askMode === 'document'
+          ? { mode: 'document', document_id: documentId || null }
+          : { mode: 'basic' }
+      const res = await apiFetch('/chat/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const { json, text } = await readJsonOrText(res)
+      if (!res.ok) throw new Error(json?.detail || text || 'Failed to create chat session')
+      setSessionId(json.id)
+      setMessages([
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: defaultAssistantMessage(askMode, documentId),
+        },
+      ])
+      await loadSessionList()
+    } catch (e) {
+      setError(e.message || String(e))
+    }
   }
 
   async function submitAuth(e) {
@@ -214,8 +502,8 @@ function App() {
       const endpoint = askMode === 'document' ? '/ask' : '/chat/basic'
       const payload =
         askMode === 'document'
-          ? { document_id: documentId, question: q, top_k: 10 }
-          : { message: q }
+          ? { document_id: documentId, question: q, top_k: 10, session_id: sessionId }
+          : { message: q, session_id: sessionId }
 
       const authRes = await apiFetch(endpoint, {
         method: 'POST',
@@ -231,7 +519,9 @@ function App() {
         content: json.answer,
         sources: Array.isArray(json.sources) ? json.sources : [],
       }
+      if (json.session_id) setSessionId(json.session_id)
       setMessages((m) => [...m, assistantMsg])
+      await loadSessionList()
     } catch (e) {
       setMessages((m) => [
         ...m,
@@ -279,6 +569,55 @@ function App() {
             <button className="logoutBtn" type="button" onClick={clearAuth}>
               Logout
             </button>
+          </div>
+
+          <div className="historyCard">
+            <div className="historyHead">
+              <div className="cardTitle">Conversations</div>
+              <button className="historyRefresh" type="button" onClick={loadSessionList} disabled={sessionsBusy || isBusy}>
+                Refresh
+              </button>
+            </div>
+            <div className="historyList">
+              {chatSessions.length ? (
+                chatSessions.map((s) => (
+                  <div
+                    key={s.id}
+                    className={`historyItem ${sessionId === s.id ? 'active' : ''}`}
+                  >
+                    <button
+                      className="historyMain"
+                      type="button"
+                      onClick={() => openSession(s)}
+                      disabled={isBusy}
+                    >
+                      <div className="historyTitle">{sessionTitle(s)}</div>
+                      <div className="historyMeta">{sessionSubtitle(s)}</div>
+                    </button>
+                    <div className="historyActions">
+                      <button
+                        className="historyActionBtn"
+                        type="button"
+                        onClick={() => renameSession(s)}
+                        disabled={isBusy}
+                      >
+                        Rename
+                      </button>
+                      <button
+                        className="historyActionBtn danger"
+                        type="button"
+                        onClick={() => deleteSession(s)}
+                        disabled={isBusy}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="historyEmpty">No previous chats yet.</div>
+              )}
+            </div>
           </div>
 
           <div className="modeCard">
@@ -358,6 +697,9 @@ function App() {
       <main className="chat">
         <header className="chatHeader">
           <div className="chatTitle">Chat Workspace</div>
+          <button className="btn" type="button" onClick={startNewChat} disabled={isBusy || (askMode === 'document' && !documentId)}>
+            New chat
+          </button>
           <div className="chatHint">
             {askMode === 'document'
               ? documentId
@@ -428,6 +770,50 @@ function App() {
           </button>
         </div>
       </main>
+
+      {sessionDialog ? (
+        <div className="modalOverlay" role="dialog" aria-modal="true" aria-labelledby="session-dialog-title">
+          <div className="modalCard">
+            <div className="modalHeader">
+              <div id="session-dialog-title" className="modalTitle">
+                {sessionDialog.type === 'rename' ? 'Rename conversation' : 'Delete conversation'}
+              </div>
+              <button className="modalClose" type="button" onClick={closeSessionDialog} disabled={sessionDialogBusy}>
+                Close
+              </button>
+            </div>
+
+            {sessionDialog.type === 'rename' ? (
+              <>
+                <p className="modalBodyText">Choose a new title for this conversation.</p>
+                <input
+                  className="modalInput"
+                  type="text"
+                  value={sessionTitleInput}
+                  onChange={(e) => setSessionTitleInput(e.target.value)}
+                  autoFocus
+                  maxLength={200}
+                  placeholder="Conversation title"
+                  disabled={sessionDialogBusy}
+                />
+              </>
+            ) : (
+              <p className="modalBodyText">
+                This will permanently delete {sessionTitle(sessionDialog.session)} and all of its messages.
+              </p>
+            )}
+
+            <div className="modalActions">
+              <button className="btn" type="button" onClick={closeSessionDialog} disabled={sessionDialogBusy}>
+                Cancel
+              </button>
+              <button className="btn primary" type="button" onClick={submitSessionDialog} disabled={sessionDialogBusy}>
+                {sessionDialog.type === 'rename' ? 'Save title' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

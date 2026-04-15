@@ -54,6 +54,34 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    mode: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    document_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
+    title: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+    messages: Mapped[List["ChatMessage"]] = relationship(back_populates="session", cascade="all, delete-orphan")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    sources: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+    session: Mapped[ChatSession] = relationship(back_populates="messages")
+
+
 def _get_database_url() -> str:
     url = os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DB_URL")
     if not url:
@@ -169,3 +197,120 @@ class PostgresStore:
             s.commit()
             s.refresh(user)
             return user
+
+    def create_chat_session(
+        self,
+        *,
+        user_id: uuid.UUID,
+        mode: str,
+        document_id: Optional[uuid.UUID] = None,
+        title: Optional[str] = None,
+    ) -> ChatSession:
+        with self.session() as s:
+            row = ChatSession(user_id=user_id, mode=mode, document_id=document_id, title=title)
+            s.add(row)
+            s.commit()
+            s.refresh(row)
+            return row
+
+    def get_chat_session(self, *, user_id: uuid.UUID, session_id: uuid.UUID) -> Optional[ChatSession]:
+        with self.session() as s:
+            return s.execute(
+                select(ChatSession).where(
+                    (ChatSession.user_id == user_id) & (ChatSession.id == session_id)
+                ).limit(1)
+            ).scalar_one_or_none()
+
+    def list_chat_sessions(
+        self,
+        *,
+        user_id: uuid.UUID,
+        mode: Optional[str] = None,
+        document_id: Optional[uuid.UUID] = None,
+        limit: int = 30,
+    ) -> List[ChatSession]:
+        with self.session() as s:
+            stmt = select(ChatSession).where(ChatSession.user_id == user_id)
+            if mode:
+                stmt = stmt.where(ChatSession.mode == mode)
+            if document_id is not None:
+                stmt = stmt.where(ChatSession.document_id == document_id)
+            stmt = stmt.order_by(ChatSession.updated_at.desc()).limit(max(1, min(100, int(limit))))
+            return list(s.execute(stmt).scalars().all())
+
+    def list_chat_messages(self, *, user_id: uuid.UUID, session_id: uuid.UUID, limit: int = 200) -> List[ChatMessage]:
+        with self.session() as s:
+            return list(
+                s.execute(
+                    select(ChatMessage).where(
+                        (ChatMessage.user_id == user_id) & (ChatMessage.session_id == session_id)
+                    ).order_by(ChatMessage.created_at.asc()).limit(max(1, min(500, int(limit))))
+                ).scalars().all()
+            )
+
+    def append_chat_message(
+        self,
+        *,
+        user_id: uuid.UUID,
+        session_id: uuid.UUID,
+        role: str,
+        content: str,
+        sources: Optional[List[Dict[str, Any]]] = None,
+    ) -> ChatMessage:
+        with self.session() as s:
+            session_row = s.execute(
+                select(ChatSession).where(
+                    (ChatSession.user_id == user_id) & (ChatSession.id == session_id)
+                ).limit(1)
+            ).scalar_one_or_none()
+            if not session_row:
+                raise RuntimeError("Chat session not found")
+
+            row = ChatMessage(
+                session_id=session_id,
+                user_id=user_id,
+                role=role,
+                content=content,
+                sources=sources,
+            )
+            s.add(row)
+            session_row.updated_at = datetime.utcnow()
+            s.commit()
+            s.refresh(row)
+            return row
+
+    def update_chat_session_title(
+        self,
+        *,
+        user_id: uuid.UUID,
+        session_id: uuid.UUID,
+        title: str,
+    ) -> Optional[ChatSession]:
+        with self.session() as s:
+            session_row = s.execute(
+                select(ChatSession).where(
+                    (ChatSession.user_id == user_id) & (ChatSession.id == session_id)
+                ).limit(1)
+            ).scalar_one_or_none()
+            if not session_row:
+                return None
+
+            session_row.title = title
+            session_row.updated_at = datetime.utcnow()
+            s.commit()
+            s.refresh(session_row)
+            return session_row
+
+    def delete_chat_session(self, *, user_id: uuid.UUID, session_id: uuid.UUID) -> bool:
+        with self.session() as s:
+            session_row = s.execute(
+                select(ChatSession).where(
+                    (ChatSession.user_id == user_id) & (ChatSession.id == session_id)
+                ).limit(1)
+            ).scalar_one_or_none()
+            if not session_row:
+                return False
+
+            s.delete(session_row)
+            s.commit()
+            return True

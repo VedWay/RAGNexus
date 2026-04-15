@@ -118,6 +118,9 @@ Open the app at http://localhost:5173
 - POST /ingest/file
 - POST /ask
 - POST /chat/basic
+- POST /chat/sessions
+- GET /chat/sessions
+- GET /chat/history/{session_id}
 
 Example calls:
 
@@ -176,6 +179,7 @@ rag/
 - /ask requires a valid document_id returned by an ingest endpoint.
 - In document mode, answers are constrained by retrieved context and returned with sources.
 - Basic chat mode does not use document retrieval.
+- Chat history is persisted per user in PostgreSQL and scoped by chat session.
 
 ## Troubleshooting
 

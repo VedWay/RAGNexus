@@ -11,8 +11,18 @@ class Generator:
             api_key=os.getenv("GROQ_API_KEY")
         )
 
-    def generate(self, query, contexts):
+    def generate(self, query, contexts, chat_history=None):
         context_text = "\n\n".join(contexts)
+        history_text = ""
+        if chat_history:
+            history_lines = []
+            for m in chat_history:
+                role = (m.get("role") or "user").lower()
+                content = (m.get("content") or "").strip()
+                if content:
+                    history_lines.append(f"{role}: {content}")
+            if history_lines:
+                history_text = "\n\nConversation history:\n" + "\n".join(history_lines)
 
         prompt = f"""
 You are a strict RAG system answering questions from provided excerpts.
@@ -27,6 +37,7 @@ Rules:
 
 Context excerpts:
 {context_text}
+{history_text}
 
 Question:
 {query}
@@ -44,20 +55,30 @@ Answer (with citations):
 
         return response.choices[0].message.content
 
-    def generate_basic(self, message):
+    def generate_basic(self, message, chat_history=None):
         """General-purpose chat for non-document mode using Groq free model."""
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a concise, friendly assistant. "
+                    "Answer general questions clearly."
+                ),
+            },
+        ]
+
+        if chat_history:
+            for item in chat_history:
+                role = item.get("role")
+                content = (item.get("content") or "").strip()
+                if role in {"user", "assistant"} and content:
+                    messages.append({"role": role, "content": content})
+
+        messages.append({"role": "user", "content": message})
+
         response = self.client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a concise, friendly assistant. "
-                        "Answer general questions clearly."
-                    ),
-                },
-                {"role": "user", "content": message},
-            ],
+            messages=messages,
         )
 
         return response.choices[0].message.content

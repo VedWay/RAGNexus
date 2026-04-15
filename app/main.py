@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 import os
 import shutil
 import uuid
+from typing import Optional
 
 from app.auth.security import (
     ACCESS_TOKEN_MINUTES,
@@ -45,10 +46,21 @@ class AskRequest(BaseModel):
     document_id: str
     question: str = Field(..., min_length=1)
     top_k: int = Field(10, ge=1, le=20)
+    session_id: Optional[str] = None
 
 
 class BasicChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
+    session_id: Optional[str] = None
+
+
+class ChatSessionCreateRequest(BaseModel):
+    mode: str = Field(..., min_length=4)
+    document_id: Optional[str] = None
+
+
+class ChatSessionUpdateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
 
 
 class AuthRegisterRequest(BaseModel):
@@ -185,7 +197,61 @@ async def ingest_file(request: Request, file: UploadFile = File(...), user: User
 def ask(req: AskRequest, request: Request, user: User = Depends(get_current_user)):
     """Answer a question about a user's document with multi-tenant isolation and rate limiting."""
     try:
-        return answer_question(user_id=str(user.id), document_id=req.document_id, question=req.question, top_k=req.top_k)
+        pg = PostgresStore()
+
+        session_row = None
+        if req.session_id:
+            try:
+                sid = uuid.UUID(req.session_id)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail="Invalid session_id") from e
+            session_row = pg.get_chat_session(user_id=user.id, session_id=sid)
+            if not session_row:
+                raise HTTPException(status_code=404, detail="Chat session not found")
+            if session_row.mode != "document":
+                raise HTTPException(status_code=400, detail="session_id is not a document-mode chat")
+
+        doc_uuid = uuid.UUID(req.document_id)
+        if session_row and session_row.document_id and session_row.document_id != doc_uuid:
+            raise HTTPException(status_code=400, detail="session document_id does not match request document_id")
+        if not session_row:
+            session_row = pg.create_chat_session(
+                user_id=user.id,
+                mode="document",
+                document_id=doc_uuid,
+                title=req.question[:120],
+            )
+
+        prior = pg.list_chat_messages(user_id=user.id, session_id=session_row.id, limit=20)
+        chat_history = [{"role": m.role, "content": m.content} for m in prior]
+
+        pg.append_chat_message(
+            user_id=user.id,
+            session_id=session_row.id,
+            role="user",
+            content=req.question,
+        )
+
+        result = answer_question(
+            user_id=str(user.id),
+            document_id=req.document_id,
+            question=req.question,
+            top_k=req.top_k,
+            chat_history=chat_history,
+        )
+
+        pg.append_chat_message(
+            user_id=user.id,
+            session_id=session_row.id,
+            role="assistant",
+            content=result["answer"],
+            sources=result.get("sources", []),
+        )
+
+        result["session_id"] = str(session_row.id)
+        return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -195,6 +261,171 @@ def ask(req: AskRequest, request: Request, user: User = Depends(get_current_user
 def chat_basic(req: BasicChatRequest, request: Request, user: User = Depends(get_current_user)):
     """Basic chat without document context, with rate limiting."""
     try:
-        return {"answer": answer_basic_message(req.message), "sources": []}
+        pg = PostgresStore()
+
+        session_row = None
+        if req.session_id:
+            try:
+                sid = uuid.UUID(req.session_id)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail="Invalid session_id") from e
+            session_row = pg.get_chat_session(user_id=user.id, session_id=sid)
+            if not session_row:
+                raise HTTPException(status_code=404, detail="Chat session not found")
+            if session_row.mode != "basic":
+                raise HTTPException(status_code=400, detail="session_id is not a basic-mode chat")
+
+        if not session_row:
+            session_row = pg.create_chat_session(user_id=user.id, mode="basic", title=req.message[:120])
+
+        prior = pg.list_chat_messages(user_id=user.id, session_id=session_row.id, limit=20)
+        chat_history = [{"role": m.role, "content": m.content} for m in prior]
+
+        pg.append_chat_message(
+            user_id=user.id,
+            session_id=session_row.id,
+            role="user",
+            content=req.message,
+        )
+
+        answer = answer_basic_message(req.message, chat_history=chat_history)
+
+        pg.append_chat_message(
+            user_id=user.id,
+            session_id=session_row.id,
+            role="assistant",
+            content=answer,
+        )
+
+        return {"answer": answer, "sources": [], "session_id": str(session_row.id)}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.post("/chat/sessions")
+def create_chat_session(req: ChatSessionCreateRequest, user: User = Depends(get_current_user)):
+    mode = (req.mode or "").strip().lower()
+    if mode not in {"basic", "document"}:
+        raise HTTPException(status_code=400, detail="mode must be 'basic' or 'document'")
+
+    document_uuid = None
+    if req.document_id:
+        try:
+            document_uuid = uuid.UUID(req.document_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail="Invalid document_id") from e
+
+    pg = PostgresStore()
+    row = pg.create_chat_session(user_id=user.id, mode=mode, document_id=document_uuid)
+    return {
+        "id": str(row.id),
+        "mode": row.mode,
+        "document_id": str(row.document_id) if row.document_id else None,
+        "title": row.title,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@app.get("/chat/sessions")
+def list_chat_sessions(mode: Optional[str] = None, document_id: Optional[str] = None, limit: int = 30, user: User = Depends(get_current_user)):
+    document_uuid = None
+    if document_id:
+        try:
+            document_uuid = uuid.UUID(document_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail="Invalid document_id") from e
+
+    pg = PostgresStore()
+    rows = pg.list_chat_sessions(user_id=user.id, mode=mode, document_id=document_uuid, limit=limit)
+    return {
+        "sessions": [
+            {
+                "id": str(r.id),
+                "mode": r.mode,
+                "document_id": str(r.document_id) if r.document_id else None,
+                "title": r.title,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.get("/chat/history/{session_id}")
+def get_chat_history(session_id: str, limit: int = 200, user: User = Depends(get_current_user)):
+    try:
+        sid = uuid.UUID(session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid session_id") from e
+
+    pg = PostgresStore()
+    session_row = pg.get_chat_session(user_id=user.id, session_id=sid)
+    if not session_row:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    rows = pg.list_chat_messages(user_id=user.id, session_id=sid, limit=limit)
+    return {
+        "session": {
+            "id": str(session_row.id),
+            "mode": session_row.mode,
+            "document_id": str(session_row.document_id) if session_row.document_id else None,
+            "title": session_row.title,
+            "created_at": session_row.created_at.isoformat() if session_row.created_at else None,
+            "updated_at": session_row.updated_at.isoformat() if session_row.updated_at else None,
+        },
+        "messages": [
+            {
+                "id": str(r.id),
+                "role": r.role,
+                "content": r.content,
+                "sources": r.sources or [],
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+    }
+
+
+@app.patch("/chat/sessions/{session_id}")
+def rename_chat_session(session_id: str, req: ChatSessionUpdateRequest, user: User = Depends(get_current_user)):
+    try:
+        sid = uuid.UUID(session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid session_id") from e
+
+    title = req.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title cannot be empty")
+
+    pg = PostgresStore()
+    row = pg.update_chat_session_title(user_id=user.id, session_id=sid, title=title)
+    if not row:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    return {
+        "id": str(row.id),
+        "mode": row.mode,
+        "document_id": str(row.document_id) if row.document_id else None,
+        "title": row.title,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@app.delete("/chat/sessions/{session_id}")
+def delete_chat_session(session_id: str, user: User = Depends(get_current_user)):
+    try:
+        sid = uuid.UUID(session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid session_id") from e
+
+    pg = PostgresStore()
+    deleted = pg.delete_chat_session(user_id=user.id, session_id=sid)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    return {"ok": True}

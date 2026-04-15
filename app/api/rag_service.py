@@ -44,14 +44,14 @@ def _json_number(value: Any):
         return None
 
 
-def answer_basic_message(message: str) -> str:
+def answer_basic_message(message: str, chat_history: List[Dict[str, str]] | None = None) -> str:
     """Use Groq free model for general basic chat mode."""
     prompt = (message or "").strip()
     if not prompt:
         return "Please type a message."
 
     generator = Generator()
-    return generator.generate_basic(prompt)
+    return generator.generate_basic(prompt, chat_history=chat_history)
 
 
 def ingest_and_index(user_id: str, source: str) -> IngestResult:
@@ -111,7 +111,14 @@ def ingest_and_index(user_id: str, source: str) -> IngestResult:
     )
 
 
-def answer_question(*, user_id: str, document_id: str, question: str, top_k: int = 5) -> Dict[str, Any]:
+def answer_question(
+    *,
+    user_id: str,
+    document_id: str,
+    question: str,
+    top_k: int = 5,
+    chat_history: List[Dict[str, str]] | None = None,
+) -> Dict[str, Any]:
     """
     Run retrieval + generation for a single document.
     Returns answer + sources suitable for UI citations.
@@ -178,7 +185,7 @@ def answer_question(*, user_id: str, document_id: str, question: str, top_k: int
         header = f"[{i}] source={src}" + (f" page={page}" if page is not None else "")
         context_blocks.append(f"{header}\n{s.get('text') or ''}".strip())
 
-    answer = generator.generate(question, context_blocks)
+    answer = generator.generate(question, context_blocks, chat_history=chat_history)
 
     return {
         "answer": answer,
