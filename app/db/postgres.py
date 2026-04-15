@@ -1,6 +1,7 @@
 import os
 import uuid
 from datetime import datetime
+from threading import Lock
 from typing import Any, Dict, Iterable, List, Optional
 
 from dotenv import load_dotenv
@@ -95,15 +96,29 @@ def get_engine():
 
 SessionLocal = sessionmaker(bind=get_engine(), class_=Session, autoflush=False, autocommit=False)
 
+_db_init_lock = Lock()
+_db_initialized = False
+
 
 def init_db() -> None:
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
 
 
+def _ensure_db_initialized() -> None:
+    global _db_initialized
+    if _db_initialized:
+        return
+    with _db_init_lock:
+        if _db_initialized:
+            return
+        init_db()
+        _db_initialized = True
+
+
 class PostgresStore:
     def __init__(self):
-        init_db()
+        _ensure_db_initialized()
 
     def session(self) -> Session:
         return SessionLocal()

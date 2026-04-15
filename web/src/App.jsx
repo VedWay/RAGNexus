@@ -157,18 +157,47 @@ function App() {
       suppressAutoLoadRef.current = false
       return
     }
-    if (askMode === 'document' && !documentId) {
-      setSessionId(null)
-      setMessages([
-        {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: defaultAssistantMessage('document', null),
-        },
-      ])
-      return
+
+    let cancelled = false
+
+    async function bootstrapChat() {
+      if (askMode === 'document' && !documentId) {
+        setSessionId(null)
+        setMessages([
+          {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: defaultAssistantMessage('document', null),
+          },
+        ])
+        await loadSessionList()
+        return
+      }
+
+      const sessions = await loadSessionList()
+      if (cancelled) return
+
+      const latest = sessions?.[0]
+      if (!latest?.id) {
+        setSessionId(null)
+        setMessages([
+          {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: defaultAssistantMessage(askMode, documentId),
+          },
+        ])
+        return
+      }
+
+      await openSession(latest)
     }
-    loadLatestSession(askMode, documentId)
+
+    bootstrapChat()
+
+    return () => {
+      cancelled = true
+    }
   }, [isAuthed, askMode, documentId])
 
   useEffect(() => {
@@ -209,9 +238,12 @@ function App() {
       const res = await apiFetch('/chat/sessions?limit=50')
       const { json } = await readJsonOrText(res)
       if (!res.ok) throw new Error('Failed to load conversation list')
-      setChatSessions(Array.isArray(json?.sessions) ? json.sessions : [])
+      const sessions = Array.isArray(json?.sessions) ? json.sessions : []
+      setChatSessions(sessions)
+      return sessions
     } catch {
       setChatSessions([])
+      return []
     } finally {
       setSessionsBusy(false)
     }
@@ -314,13 +346,8 @@ function App() {
 
   async function loadLatestSession(nextMode, nextDocumentId) {
     try {
-      const query = new URLSearchParams({ mode: nextMode, limit: '1' })
-      if (nextMode === 'document' && nextDocumentId) query.set('document_id', nextDocumentId)
-      const listRes = await apiFetch(`/chat/sessions?${query.toString()}`)
-      const { json: listJson } = await readJsonOrText(listRes)
-      if (!listRes.ok) throw new Error('Failed to load chat sessions')
-
-      const latest = listJson?.sessions?.[0]
+      const sessions = await loadSessionList()
+      const latest = sessions?.[0]
       if (!latest?.id) {
         setSessionId(null)
         setMessages([
@@ -333,24 +360,7 @@ function App() {
         return
       }
 
-      setSessionId(latest.id)
-      const historyRes = await apiFetch(`/chat/history/${latest.id}`)
-      const { json: historyJson } = await readJsonOrText(historyRes)
-      if (!historyRes.ok) throw new Error('Failed to load chat history')
-
-      const mapped = mapHistoryToMessages(historyJson?.messages)
-      setMessages(
-        mapped.length
-          ? mapped
-          : [
-              {
-                id: crypto.randomUUID(),
-                role: 'assistant',
-                content: defaultAssistantMessage(nextMode, nextDocumentId),
-              },
-            ],
-      )
-          await loadSessionList()
+      await openSession(latest)
     } catch {
       setSessionId(null)
       setMessages([
@@ -360,7 +370,6 @@ function App() {
           content: defaultAssistantMessage(nextMode, nextDocumentId),
         },
       ])
-      await loadSessionList()
     }
   }
 
