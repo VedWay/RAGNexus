@@ -65,6 +65,22 @@
   font-weight: 600;
 }
 
+.sidebarNewChat {
+  width: 100%;
+  background: linear-gradient(135deg, #d9c5a0, #bdaa85);
+  border-color: #8f7a57;
+  color: #fff;
+}
+
+.sidebarNewChat:hover {
+  filter: brightness(1.02);
+}
+
+.sidebarNewChat:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .modeCard {
   border: 1px solid var(--border);
   border-radius: 12px;

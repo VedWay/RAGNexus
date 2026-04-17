@@ -602,6 +602,10 @@ function App() {
             </button>
           </div>
 
+          <button className="btn sidebarNewChat" type="button" onClick={startNewChat} disabled={isBusy || (askMode === 'document' && !documentId)}>
+            New chat
+          </button>
+
           <div className="historyCard">
             <div className="historyHead">
               <div className="cardTitle">Conversations</div>
@@ -728,9 +732,6 @@ function App() {
       <main className="chat">
         <header className="chatHeader">
           <div className="chatTitle">Chat Workspace</div>
-          <button className="btn" type="button" onClick={startNewChat} disabled={isBusy || (askMode === 'document' && !documentId)}>
-            New chat
-          </button>
           <div className="chatHint">
             {askMode === 'document'
               ? documentId
