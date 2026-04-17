@@ -161,19 +161,6 @@ function App() {
     let cancelled = false
 
     async function bootstrapChat() {
-      if (askMode === 'document' && !documentId) {
-        setSessionId(null)
-        setMessages([
-          {
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            content: defaultAssistantMessage('document', null),
-          },
-        ])
-        await loadSessionList()
-        return
-      }
-
       const sessions = await loadSessionList()
       if (cancelled) return
 
@@ -184,7 +171,7 @@ function App() {
           {
             id: crypto.randomUUID(),
             role: 'assistant',
-            content: defaultAssistantMessage(askMode, documentId),
+            content: defaultAssistantMessage('document', null),
           },
         ])
         return
@@ -198,7 +185,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [isAuthed, askMode, documentId])
+  }, [isAuthed])
 
   useEffect(() => {
     if (!isAuthed) return
@@ -373,6 +360,21 @@ function App() {
     }
   }
 
+  function switchAskMode(nextMode) {
+    if (nextMode === askMode) return
+    setError('')
+    setStatus('')
+    setAskMode(nextMode)
+    setSessionId(null)
+    setMessages([
+      {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: defaultAssistantMessage(nextMode, documentId),
+      },
+    ])
+  }
+
   async function startNewChat() {
     setError('')
     setStatus('')
@@ -458,6 +460,16 @@ function App() {
       if (!authRes.ok) throw new Error(json?.detail || text || `Failed to ingest URL (HTTP ${authRes.status}).`)
       setDocumentId(json.document_id)
       setSource(json.source)
+      if (askMode === 'document') {
+        setSessionId(null)
+        setMessages([
+          {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: defaultAssistantMessage('document', json.document_id),
+          },
+        ])
+      }
       setStatus(`Ingested: ${json.source} (${json.chunk_count} chunks)`)
     } catch (e) {
       setError(e.message || String(e))
@@ -483,6 +495,16 @@ function App() {
       if (!res.ok) throw new Error(json?.detail || text || `Failed to ingest file (HTTP ${res.status}).`)
       setDocumentId(json.document_id)
       setSource(json.source)
+      if (askMode === 'document') {
+        setSessionId(null)
+        setMessages([
+          {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: defaultAssistantMessage('document', json.document_id),
+          },
+        ])
+      }
       setStatus(`Ingested: ${json.source} (${json.chunk_count} chunks)`)
     } catch (e) {
       setError(e.message || String(e))
@@ -634,14 +656,14 @@ function App() {
             <div className="modeToggle" role="tablist" aria-label="Ask mode">
               <button
                 className={`modeBtn ${askMode === 'document' ? 'active' : ''}`}
-                onClick={() => setAskMode('document')}
+                onClick={() => switchAskMode('document')}
                 type="button"
               >
                 Ask from PDF/Text
               </button>
               <button
                 className={`modeBtn ${askMode === 'basic' ? 'active' : ''}`}
-                onClick={() => setAskMode('basic')}
+                onClick={() => switchAskMode('basic')}
                 type="button"
               >
                 Basic Chat
