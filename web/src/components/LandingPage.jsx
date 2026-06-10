@@ -35,13 +35,7 @@ function LandingPage({
 
       <main className="relative z-10 mx-auto grid w-full max-w-7xl gap-10 px-6 pb-12 pt-6 lg:grid-cols-[1.08fr_0.92fr] lg:gap-16 lg:px-10 lg:pb-20">
         <section className="space-y-8 self-center">
-          <div className="inline-flex items-center gap-2 rounded-full border border-slate-300/70 bg-white/70 px-4 py-2 text-xs font-medium text-slate-700 backdrop-blur">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-            </span>
-            Trusted by product and support teams
-          </div>
+          
 
           <div className="space-y-5">
             <h1 className="max-w-2xl text-4xl font-semibold leading-[1.05] tracking-[-0.02em] text-slate-900 sm:text-5xl lg:text-6xl">
