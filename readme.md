@@ -302,5 +302,3 @@ rag/
 - **Improvements:** Fine-tune retrievers or rerankers on domain data, use supervised re-ranking datasets, add confidence calibration, and expand evaluation with human studies.
 
 ---
-
-If you want, I appended this section to the project README at [readme.md](readme.md). You can ask me to shorten, expand with diagrams, or convert parts into docs for the `web/` UI or API reference.
