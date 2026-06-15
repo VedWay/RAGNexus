@@ -388,11 +388,10 @@ function App() {
   async function startNewChat() {
     setError('')
     setStatus('')
+    setDocumentId(null)
+    setSource(null)
     try {
-      const payload =
-        askMode === 'document'
-          ? { mode: 'document', document_id: documentId || null }
-          : { mode: 'basic' }
+      const payload = { mode: askMode === 'document' ? 'document' : 'basic' }
       const res = await apiFetch('/chat/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -405,7 +404,7 @@ function App() {
         {
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: defaultAssistantMessage(askMode, documentId),
+          content: defaultAssistantMessage(askMode, null),
         },
       ])
       await loadSessionList()
@@ -606,7 +605,7 @@ function App() {
             </button>
           </div>
 
-          <button className="btn sidebarNewChat" type="button" onClick={startNewChat} disabled={isBusy || (askMode === 'document' && !documentId)}>
+          <button className="btn sidebarNewChat" type="button" onClick={startNewChat} disabled={isBusy}>
             New chat
           </button>
 
