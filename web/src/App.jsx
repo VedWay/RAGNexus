@@ -116,10 +116,20 @@ function App() {
     localStorage.setItem('auth_user', JSON.stringify(nextUser || {}))
   }
 
+  function persistDocumentSelection(nextDocument) {
+    const nextDocumentId = nextDocument?.id || ''
+    const nextSource = nextDocument?.source || ''
+
+    setDocumentId(nextDocumentId || null)
+    setSource(nextSource || null)
+  }
+
   function clearAuth() {
     setAccessToken('')
     setRefreshToken('')
     setUserInfo(null)
+    setDocumentId(null)
+    setSource(null)
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
     localStorage.removeItem('auth_user')
@@ -187,11 +197,6 @@ function App() {
     }
   }, [isAuthed])
 
-  useEffect(() => {
-    if (!isAuthed) return
-    loadSessionList()
-  }, [isAuthed])
-
   async function apiFetch(path, options = {}) {
     const headers = { ...(options.headers || {}) }
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`
@@ -247,7 +252,12 @@ function App() {
         setAskMode('basic')
       } else {
         setAskMode('document')
-        if (session.document_id) setDocumentId(session.document_id)
+        if (session.document_id) {
+          persistDocumentSelection({ id: session.document_id, source: 'Restored from conversation' })
+        } else {
+          setDocumentId(null)
+          setSource(null)
+        }
       }
 
       setSessionId(session.id)
@@ -458,18 +468,15 @@ function App() {
       })
       const { json, text } = await readJsonOrText(authRes)
       if (!authRes.ok) throw new Error(json?.detail || text || `Failed to ingest URL (HTTP ${authRes.status}).`)
-      setDocumentId(json.document_id)
-      setSource(json.source)
-      if (askMode === 'document') {
-        setSessionId(null)
-        setMessages([
-          {
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            content: defaultAssistantMessage('document', json.document_id),
-          },
-        ])
-      }
+      persistDocumentSelection({ id: json.document_id, source: json.source })
+      setSessionId(null)
+      setMessages([
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: defaultAssistantMessage('document', json.document_id),
+        },
+      ])
       setStatus(`Ingested: ${json.source} (${json.chunk_count} chunks)`)
     } catch (e) {
       setError(e.message || String(e))
@@ -493,18 +500,15 @@ function App() {
       const res = await apiFetch('/ingest/file', { method: 'POST', body: form })
       const { json, text } = await readJsonOrText(res)
       if (!res.ok) throw new Error(json?.detail || text || `Failed to ingest file (HTTP ${res.status}).`)
-      setDocumentId(json.document_id)
-      setSource(json.source)
-      if (askMode === 'document') {
-        setSessionId(null)
-        setMessages([
-          {
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            content: defaultAssistantMessage('document', json.document_id),
-          },
-        ])
-      }
+      persistDocumentSelection({ id: json.document_id, source: json.source })
+      setSessionId(null)
+      setMessages([
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: defaultAssistantMessage('document', json.document_id),
+        },
+      ])
       setStatus(`Ingested: ${json.source} (${json.chunk_count} chunks)`)
     } catch (e) {
       setError(e.message || String(e))
@@ -723,6 +727,9 @@ function App() {
               <div className="k">source</div>
               <div className="v">{source || '—'}</div>
             </div>
+            {documentId ? (
+              <div className="note ok">This document is loaded from your saved uploads and does not need to be ingested again.</div>
+            ) : null}
             {status ? <div className="note ok">{status}</div> : null}
             {error ? <div className="note err">{error}</div> : null}
           </div>

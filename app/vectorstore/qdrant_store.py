@@ -17,22 +17,36 @@ class QdrantStore:
         self.collection_name = "documents"
 
     def create_collection(self):
-        self.client.recreate_collection(
+        """Create the collection if it does not already exist."""
+        self._ensure_collection()
+
+    def _ensure_collection(self):
+        try:
+            self.client.get_collection(collection_name=self.collection_name)
+            return
+        except Exception:
+            pass
+
+        self.client.create_collection(
             collection_name=self.collection_name,
             vectors_config=VectorParams(
                 size=384,  # embedding dimension
                 distance=Distance.COSINE
             )
         )
-        
+
         # Create payload index on tenant_id for fast filtering during multi-tenant searches
-        self.client.create_payload_index(
-            collection_name=self.collection_name,
-            field_name="tenant_id",
-            field_schema=PayloadSchemaType.UUID
-        )
+        try:
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="tenant_id",
+                field_schema=PayloadSchemaType.UUID
+            )
+        except Exception:
+            pass
 
     def upload(self, vectors, payloads=None, ids=None, texts=None, tenant_id: str = None):
+        self._ensure_collection()
         points = []
 
         if payloads is None:
@@ -62,6 +76,8 @@ class QdrantStore:
 
     def search(self, query_vector, top_k=3, tenant_id: str = None):
         from qdrant_client.models import FieldCondition, MatchValue, Filter
+
+        self._ensure_collection()
         
         # Build filter for tenant_id to ensure multi-tenant isolation
         query_filter = None
