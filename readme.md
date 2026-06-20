@@ -190,7 +190,7 @@ rag/
 - CORS/proxy issues in web:
   Ensure backend is running on port 8000 and frontend on 5173.
 
-## Deep Dive: RAGNexus — Full Explanation
+## Deep Dive: RAGNexus —
 
 **1. What is RAG and why does it exist?**
 - **Definition:** Retrieval-Augmented Generation (RAG) is a pattern that combines a retrieval system (search over a knowledge store) with a generative model (an LLM). The retriever finds relevant documents or passages and the generator composes an answer conditioned on that retrieved context.
