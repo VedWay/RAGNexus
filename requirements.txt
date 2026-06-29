@@ -1,3 +1,5 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 beautifulsoup4
 fastapi
 numpy
@@ -9,6 +11,7 @@ python-dotenv
 qdrant-client
 rank-bm25
 requests
+torch
 sentence-transformers
 sqlalchemy
 uvicorn
