@@ -9,7 +9,8 @@ class QdrantStore:
     def __init__(self):
         url = os.getenv("QDRANT_URL")
         if url:
-            self.client = QdrantClient(url=url)
+            api_key = os.getenv("QDRANT_API_KEY")
+            self.client = QdrantClient(url=url, api_key=api_key)
         else:
             host = os.getenv("QDRANT_HOST", "localhost")
             port = int(os.getenv("QDRANT_PORT", "6334"))
@@ -78,7 +79,7 @@ class QdrantStore:
         from qdrant_client.models import FieldCondition, MatchValue, Filter
 
         self._ensure_collection()
-        
+
         # Build filter for tenant_id to ensure multi-tenant isolation
         query_filter = None
         if tenant_id:
@@ -90,7 +91,7 @@ class QdrantStore:
                     )
                 ]
             )
-        
+
         results = self.client.query_points(
             collection_name=self.collection_name,
             query=query_vector,
