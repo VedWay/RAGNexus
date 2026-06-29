@@ -15,6 +15,7 @@ uvicorn
 python-multipart
 bcrypt
 PyJWT
+slowapi
 
 # LangChain pieces used by ingestion/chunking
 langchain-core
