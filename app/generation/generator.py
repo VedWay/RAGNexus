@@ -47,7 +47,7 @@ Answer (with citations):
 
         
         response = self.client.chat.completions.create(
-            model="llama-3.1-8b-instant",   # ✅ fast + free
+            model="openai/gpt-oss-20b",   # ✅ fast + free
             messages=[
                 {"role": "user", "content": prompt}
             ]
@@ -77,7 +77,7 @@ Answer (with citations):
         messages.append({"role": "user", "content": message})
 
         response = self.client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="openai/gpt-oss-20b",
             messages=messages,
         )
 

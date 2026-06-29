@@ -35,7 +35,7 @@ Question -> HyDE -> Hybrid Retriever (Qdrant + BM25)
 - Vector DB: Qdrant
 - Relational DB: PostgreSQL (Supabase Postgres also supported)
 - Retrieval: BM25 + dense vector search + HyDE + reranker
-- LLM: Groq (llama-3.1-8b-instant)
+- LLM: Groq (openai/gpt-oss-20b)
 - Frontend: React + Vite
 
 ## Prerequisites

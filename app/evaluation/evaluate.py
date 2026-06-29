@@ -10,7 +10,7 @@ from app.evaluation.rag_wrapper import rag_pipeline
 
 # 🔥 GROQ LLM
 llm = ChatGroq(
-    model="llama-3.1-8b-instant",
+    model="openai/gpt-oss-20b",
     groq_api_key=os.getenv("GROQ_API_KEY")
 )
 
