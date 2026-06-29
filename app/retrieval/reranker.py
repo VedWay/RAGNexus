@@ -1,12 +1,12 @@
-from sentence_transformers import CrossEncoder
+from fastembed.rerank.cross_encoder import TextCrossEncoder
 
 class Reranker:
     def __init__(self):
-        self.model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+        self.model = TextCrossEncoder(model_name="Xenova/ms-marco-MiniLM-L-6-v2")
 
     def rerank(self, query, docs):
-        pairs = [(query, doc["text"]) for doc in docs]
-        scores = self.model.predict(pairs)
+        texts = [doc["text"] for doc in docs]
+        scores = list(self.model.rerank(query, texts))
 
         for i in range(len(docs)):
             docs[i]["rerank_score"] = scores[i]
