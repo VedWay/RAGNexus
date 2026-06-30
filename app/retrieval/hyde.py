@@ -35,7 +35,7 @@ Expanded Passage:
 
             expanded_text = response.choices[0].message.content.strip()
 
-            print("\n🧠 HyDE Expanded Query:\n", expanded_text)
+            # print("\n🧠 HyDE Expanded Query:\n", expanded_text)
 
             return expanded_text
 
