@@ -51,6 +51,8 @@ function App() {
   const suppressAutoLoadRef = useRef(false)
   const isAuthed = Boolean(accessToken)
 
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
   useEffect(() => {
     const el = listRef.current
     if (!el) return
@@ -198,30 +200,30 @@ function App() {
   }, [isAuthed])
 
   async function apiFetch(path, options = {}) {
-    const headers = { ...(options.headers || {}) }
-    if (accessToken) headers.Authorization = `Bearer ${accessToken}`
+  const headers = { ...(options.headers || {}) }
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`
 
-    let res = await fetch(path, { ...options, headers })
-    if (res.status !== 401 || !refreshToken) return res
+  let res = await fetch(`${API_URL}${path}`, { ...options, headers })
+  if (res.status !== 401 || !refreshToken) return res
 
-    const refreshRes = await fetch('/auth/refresh', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    })
+  const refreshRes = await fetch(`${API_URL}/auth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  })
 
-    if (!refreshRes.ok) {
-      clearAuth()
-      return res
-    }
-
-    const refreshPayload = await refreshRes.json()
-    persistAuth(refreshPayload)
-
-    const retryHeaders = { ...(options.headers || {}), Authorization: `Bearer ${refreshPayload.access_token}` }
-    res = await fetch(path, { ...options, headers: retryHeaders })
+  if (!refreshRes.ok) {
+    clearAuth()
     return res
   }
+
+  const refreshPayload = await refreshRes.json()
+  persistAuth(refreshPayload)
+
+  const retryHeaders = { ...(options.headers || {}), Authorization: `Bearer ${refreshPayload.access_token}` }
+  res = await fetch(`${API_URL}${path}`, { ...options, headers: retryHeaders })
+  return res
+}
 
   async function loadSessionList() {
     if (!isAuthed) return
@@ -414,31 +416,31 @@ function App() {
   }
 
   async function submitAuth(e) {
-    e.preventDefault()
-    setAuthError('')
-    setAuthBusy(true)
-    try {
-      const endpoint = authMode === 'login' ? '/auth/login' : '/auth/register'
-      const payload =
-        authMode === 'login'
-          ? { email: authEmail, password: authPassword }
-          : { email: authEmail, password: authPassword, full_name: authName }
+  e.preventDefault()
+  setAuthError('')
+  setAuthBusy(true)
+  try {
+    const endpoint = authMode === 'login' ? '/auth/login' : '/auth/register'
+    const payload =
+      authMode === 'login'
+        ? { email: authEmail, password: authPassword }
+        : { email: authEmail, password: authPassword, full_name: authName }
 
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      const { json, text } = await readJsonOrText(res)
-      if (!res.ok) throw new Error(json?.detail || text || `Auth failed (HTTP ${res.status})`)
-      persistAuth(json)
-      setAuthPassword('')
-    } catch (err) {
-      setAuthError(err.message || String(err))
-    } finally {
-      setAuthBusy(false)
-    }
+    const res = await fetch(`${API_URL}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const { json, text } = await readJsonOrText(res)
+    if (!res.ok) throw new Error(json?.detail || text || `Auth failed (HTTP ${res.status})`)
+    persistAuth(json)
+    setAuthPassword('')
+  } catch (err) {
+    setAuthError(err.message || String(err))
+  } finally {
+    setAuthBusy(false)
   }
+}
 
   async function readJsonOrText(res) {
     const text = await res.text()
