@@ -51,6 +51,12 @@ function App() {
   const suppressAutoLoadRef = useRef(false)
   const isAuthed = Boolean(accessToken)
 
+  useEffect(() => {
+  fetch(`${API_URL}/health`).catch(() => {
+    // ignore errors — this is just a best-effort wake-up ping
+  })
+}, [])
+
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
   useEffect(() => {
@@ -199,30 +205,38 @@ function App() {
     }
   }, [isAuthed])
 
-  async function apiFetch(path, options = {}) {
+  async function apiFetch(path, options = {}, retries = 1) {
   const headers = { ...(options.headers || {}) }
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`
 
-  let res = await fetch(`${API_URL}${path}`, { ...options, headers })
-  if (res.status !== 401 || !refreshToken) return res
+  try {
+    let res = await fetch(`${API_URL}${path}`, { ...options, headers })
+    if (res.status !== 401 || !refreshToken) return res
 
-  const refreshRes = await fetch(`${API_URL}/auth/refresh`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refresh_token: refreshToken }),
-  })
+    const refreshRes = await fetch(`${API_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    })
 
-  if (!refreshRes.ok) {
-    clearAuth()
+    if (!refreshRes.ok) {
+      clearAuth()
+      return res
+    }
+
+    const refreshPayload = await refreshRes.json()
+    persistAuth(refreshPayload)
+
+    const retryHeaders = { ...(options.headers || {}), Authorization: `Bearer ${refreshPayload.access_token}` }
+    res = await fetch(`${API_URL}${path}`, { ...options, headers: retryHeaders })
     return res
+  } catch (err) {
+    if (retries > 0) {
+      await new Promise((r) => setTimeout(r, 3000))
+      return apiFetch(path, options, retries - 1)
+    }
+    throw err
   }
-
-  const refreshPayload = await refreshRes.json()
-  persistAuth(refreshPayload)
-
-  const retryHeaders = { ...(options.headers || {}), Authorization: `Bearer ${refreshPayload.access_token}` }
-  res = await fetch(`${API_URL}${path}`, { ...options, headers: retryHeaders })
-  return res
 }
 
   async function loadSessionList() {
