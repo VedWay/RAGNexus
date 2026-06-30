@@ -7,8 +7,8 @@ class Chunker:
 
     def __init__(self):
         self.splitter = RecursiveCharacterTextSplitter(
-            chunk_size=200,      # 🔥 KEY FIX
-            chunk_overlap=50,
+            chunk_size=800,       # 🔥 increased from 200
+            chunk_overlap=150,    # 🔥 increased from 50
             separators=["\n\n", "\n", ".", " ", ""]
         )
 
